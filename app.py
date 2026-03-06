@@ -14,11 +14,8 @@ st.set_page_config(page_title="VTuber Network Explorer", layout="wide")
 st.title("🔭 VTuber Network Explorer")
 
 # The name of your data file hosted on GitHub
-DATA_FILE = "vtuber_data.jsonl" # Note: Update this if reading directly from your new .json map format!
-
-# Sets for aggressive filtering
-SELF_REFS = {'herself', 'himself', 'themself', 'themselves', 'self', 'self-made', 'self designed', 'self rigged', 'theirself', 'self-designed', 'self-rigged', 'self made', 'her own', 'their own', 'his own', 'herself!'}
-INVALID_CREATORS = {'unknown', '?', '??', '???', 'tba', 'went to get milk', 'left to go get milk', 'none', 'n/a', 'rigger', 'model', 'illustrator', 'art', 'rigging', 'live2d', '3d', '2d'}
+DATA_FILE = "vtuber_data.jsonl"
+SELF_REFS = ['herself', 'himself', 'themself', 'themselves', 'self', 'self-made', 'self designed', 'self rigged', 'theirself', 'Theirself', 'self-designed', 'self-rigged', "self made", "self drawn", "self-drawn"]
 
 # ==========================================
 # 2. CACHED DATA LOADING & SANITIZATION
@@ -27,16 +24,16 @@ INVALID_CREATORS = {'unknown', '?', '??', '???', 'tba', 'went to get milk', 'lef
 def load_and_clean_data(filepath):
     data = []
     try:
-        # Assuming we are now reading the raw JSON dictionary format you provided
         with open(filepath, 'r', encoding='utf-8') as f:
-            raw_dict = json.load(f)
-            # Convert dictionary format to a list of dicts for pandas
-            for vtuber, creators in raw_dict.items():
-                data.append({"name": vtuber, "raw_creators": creators})
+            for line in f:
+                try:
+                    data.append(json.loads(line))
+                except:
+                    continue
     except FileNotFoundError:
         return None
 
-    df = pd.DataFrame(data)
+    df = pd.json_normalize(data)
     name_map = {}
 
     def get_normalized_name(raw_name):
@@ -46,84 +43,73 @@ def load_and_clean_data(filepath):
             name_map[low] = raw_name.strip()
         return name_map[low]
 
-    def clean_creator_string(text):
-        # 1. Remove URLs (e.g., https://x.com/... or //x.com/...)
-        text = re.sub(r'(?:https?:)?//\S+', '', text)
+    def extract_creators_strict(text, vtuber_name):
+        if pd.isna(text) or not str(text).strip():
+            return []
         
-        # 2. Remove role labels/prefixes (e.g., "Live2D:", "Rig:", "3D Model Artist:")
-        role_patterns = [
-            r'Live2D(?: Max| Model)?\s*[:\-]?\s*',
-            r'(?:2D|3D)\s*(?:Model(?:ling|er)?\s*|Art(?:ist)?\s*)?[:\-]?\s*',
-            r'Rig(?:ging|ger)?\s*[:\-)]?\s*',
-            r'Ill?ustrat(?:ion|or)\s*[:\-]?\s*',
-            r'Model(?:ling|er)?\s*[:\-]?\s*',
-            r'Art(?:ist)?\s*[:\-]?\s*',
-            r'Design(?:er)?\s*[:\-]?\s*',
-            r'Current design\s*[:\-]?\s*'
-        ]
-        for pattern in role_patterns:
-            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
-
-        # 3. Remove unwanted brackets/parentheses and their contents (e.g., [clothes], (Base), (2.0))
-        # This keeps Japanese alternate names like "(森倉円)" intact but targets structural notes
-        meta_patterns = [
-            r'\([^)]*(?:base|redesign|original|current|previous|main|outfit|draft|nsfw|supervisor|rigging|version|model|art|1\.0|2\.0|3\.0|\#\d+)[^)]*\)',
-            r'\[(?:face|clothes|expressions?)\]',
-            r'expressions?\]' # Catches broken leftover brackets like "expressions]"
-        ]
-        for pattern in meta_patterns:
-            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
-
-        # 4. Strip stray artifacts at the end of strings
-        text = re.sub(r'\(\s*Art$', '', text, flags=re.IGNORECASE)
-        text = re.sub(r'Rigging\)$', '', text, flags=re.IGNORECASE)
-
-        return text.strip()
-
-    def extract_creators_strict(creator_list, vtuber_name):
-        if not isinstance(creator_list, list):
-            creator_list = [creator_list]
-            
+        # Initial cleaning of formatting marks
+        clean_text = str(text).replace("'''", "").replace("```", "").replace("\n", " ")
+        
+        # Split by comma first to handle lists of creators
+        chunks = clean_text.split(',')
         extracted_names = set()
-        
-        for text in creator_list:
-            if pd.isna(text) or not str(text).strip():
-                continue
+
+        for chunk in chunks:
+            # 1. RECURSIVE COLON PROCESSING
+            # Keep taking the right side of the colon until none remain
+            while ':' in chunk:
+                parts = chunk.split(':', 1)
+                chunk = parts[1] if len(parts) > 1 else parts[0]
             
-            clean_text = str(text).replace("'''", "").replace("```", "").replace("\n", " ")
-            clean_text = clean_creator_string(clean_text)
+            # 2. PARENTHESES REMOVAL
+            # Remove everything inside () including the parentheses themselves
+            chunk = re.sub(r'\(.*?\)', '', chunk).strip()
+
+            # 3. SUB-SPLITTING ('and', '&')
+            # Handle cases like "ArtistA & ArtistB" or "ArtistA and ArtistB"
+            sub_chunks = re.split(r'\s+and\s+|&', chunk, flags=re.IGNORECASE)
             
-            # Split by commas, pluses, slashes, ampersands, and 'and' to separate combined creators
-            chunks = re.split(r',|\+|\/|&|\s+and\s+', clean_text, flags=re.IGNORECASE)
-            
-            for name in chunks:
-                # Remove leading/trailing garbage characters (*, @, -, _)
-                name = re.sub(r'^[@*\-\s\'\"_]+|[@*\-\s\'\"_]+$', '', name)
-                
-                # If there's still a colon acting as a separator, take the right side
-                if ':' in name:
-                    name = name.split(':', 1)[-1]
-                
+            for name in sub_chunks:
                 name = name.strip()
-                
-                # Check for joke entries or empty strings
-                if not name or len(name) < 2 or name.lower() in INVALID_CREATORS:
+                if not name:
                     continue
-                    
-                # Convert self-references into the VTuber's own name
-                lower_name = name.lower()
-                if lower_name in SELF_REFS or "herself" in lower_name or "themselves" in lower_name or "himself" in lower_name:
+
+                # 4. SELF-REFERENCE CHECK
+                if name.lower() in SELF_REFS or any((ref in name.lower() and name.lower() != "self") for ref in SELF_REFS):
                     name = vtuber_name
-                    
-                normed = get_normalized_name(name)
-                if normed: 
-                    extracted_names.add(normed)
-                    
+
+                # 5. Account for "By" like "Designed by KOSMiYU"
+                if "by" in name.lower():
+                    name = name.split("by")[-1].strip()
+
+                # 6. Account for starting char of "*" or "* "
+                if name.startswith("*") or name.startswith("* "):
+                    name = name[1:].strip()
+
+                # 7. Account for multiple " *"
+                if " *" in name:
+                    for name_part in name.split(" *"):
+                        normed = get_normalized_name(name_part)
+                        if normed:
+                            extracted_names.add(normed)
+                else:
+
+                    # remove faulty "(text"
+                    if "(" in name:
+                        name = name.split("(")[0].strip()
+
+                    normed = get_normalized_name(name)
+                    if normed:
+                        extracted_names.add(normed)
+
         return list(extracted_names)
 
-    # Apply strict logic based on the raw JSON list
+    # Apply the streamlined logic
     df['all_creators'] = df.apply(
-        lambda row: extract_creators_strict(row.get('raw_creators', []), row.get('name', 'Unknown')), axis=1
+        lambda row: list(set(
+            extract_creators_strict(row.get('illustrator', ''), row.get('name', 'Unknown')) +
+            extract_creators_strict(row.get('rigger', ''), row.get('name', 'Unknown'))
+        )), axis=1
     )
     
     return df
@@ -137,12 +123,12 @@ min_connections = st.sidebar.slider("Minimum VTubers per Creator", 1, 10, 2,
                                     help="Hides creators who only have one 'child'.")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown('Created by <a href="[https://x.com/TheDarkEnjoyer](https://x.com/TheDarkEnjoyer)" target="_blank">TheDarkEnjoyer</a>', unsafe_allow_html=True)
+st.sidebar.markdown('Created by <a href="https://x.com/TheDarkEnjoyer" target="_blank">TheDarkEnjoyer</a>', unsafe_allow_html=True)
 
 # ==========================================
 # 4. MAIN APPLICATION LOGIC
 # ==========================================
-with st.spinner("Loading and Sanitizing VTuber Database..."):
+with st.spinner("Loading VTuber Database..."):
     df = load_and_clean_data(DATA_FILE)
 
 if df is None:
@@ -162,11 +148,15 @@ else:
 
     for _, row in df.iterrows():
         v_name = row.get('name', 'Unknown')
+        img = row.get('img', None)
         creators = [c for c in row['all_creators'] if c in valid_creators]
 
         if creators:
             # Add VTuber Node
-            G.add_node(v_name, color='#1DA1F2', size=15, title=f"VTuber: {v_name}", label=v_name, group="VTuber")
+            if pd.notna(img) and str(img).startswith("http"):
+                G.add_node(v_name, shape='image', image=img, size=20, title=f"VTuber: {v_name}", label=v_name, group="VTuber")
+            else:
+                G.add_node(v_name, color='#1DA1F2', size=15, title=f"VTuber: {v_name}", label=v_name, group="VTuber")
             vtuber_nodes.add(v_name)
             
             # Add Creator Nodes & Edges
@@ -247,9 +237,9 @@ else:
     with tab2:
         st.subheader("Creator Productivity Leaderboard")
         st.markdown("Shows every parsed creator and the total number of VTubers they are credited with in this dataset.")
-        
+
         df_leaderboard = pd.DataFrame(list(creator_counts.items()), columns=["Creator Name", "VTuber Count"])
         df_leaderboard = df_leaderboard.sort_values(by="VTuber Count", ascending=False).reset_index(drop=True)
         df_leaderboard.index = df_leaderboard.index + 1 
-        
+
         st.dataframe(df_leaderboard, width='stretch')
