@@ -86,6 +86,7 @@ def load_and_clean_data(filepath):
                 if name.startswith("*") or name.startswith("* "):
                     name = name[1:].strip()
 
+
                 # 7. Account for multiple " *"
                 if " *" in name:
                     for name_part in name.split(" *"):
@@ -97,6 +98,9 @@ def load_and_clean_data(filepath):
                     # remove faulty "(text"
                     if "(" in name:
                         name = name.split("(")[0].strip()
+
+                    if name.startswith("@"):
+                        name = name[1:].strip()
 
                     normed = get_normalized_name(name)
                     if normed:
