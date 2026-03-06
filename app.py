@@ -181,7 +181,7 @@ else:
             net.set_options("""
             {
               "configure": {
-                "enabled": true,
+                "enabled": false,
                 "filter": ["physics"],
                 "showButton": true
               },
