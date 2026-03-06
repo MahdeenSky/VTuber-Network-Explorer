@@ -101,8 +101,11 @@ def load_and_clean_data(filepath):
 # ==========================================
 st.sidebar.header("📁 Graph Filtering")
 st.sidebar.markdown("Adjust the settings below to filter the network.")
-min_connections = st.sidebar.slider("Minimum VTubers per Creator", 1, 10, 2, 
+min_connections = st.sidebar.slider("Minimum VTubers per Creator", 1, 10, 2,
                                     help="Hides creators who only have one 'child'.")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown('Created by <a href="https://x.com/TheDarkEnjoyer" target="_blank">TheDarkEnjoyer</a>', unsafe_allow_html=True)
 
 # ==========================================
 # 4. MAIN APPLICATION LOGIC
