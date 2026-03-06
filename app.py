@@ -119,45 +119,29 @@ def load_and_clean_data(filepath):
     return df
 
 # ==========================================
-# 3. SIDEBAR CONTROLS
+# 3. CACHED GRAPH GENERATION
 # ==========================================
-st.sidebar.header("📁 Graph Filtering")
-st.sidebar.markdown("Adjust the settings below to filter the network.")
-min_connections = st.sidebar.slider("Minimum VTubers per Creator", 1, 10, 2,
-                                    help="Hides creators who only have one 'child'.")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown('Created by <a href="https://x.com/TheDarkEnjoyer" target="_blank">TheDarkEnjoyer</a>', unsafe_allow_html=True)
-
-# ==========================================
-# 4. MAIN APPLICATION LOGIC
-# ==========================================
-with st.spinner("Loading VTuber Database..."):
-    df = load_and_clean_data(DATA_FILE)
-
-if df is None:
-    st.error(f"❌ Could not find `{DATA_FILE}`. Please make sure the file is uploaded to your repository!")
-else:
-    # --- GRAPH BUILDING ---
+@st.cache_data
+def build_network(_df, min_conn, render_img):
     creator_counts = {}
-    for creators in df['all_creators']:
+    for creators in _df['all_creators']:
         for c in creators:
             creator_counts[c] = creator_counts.get(c, 0) + 1
     
-    valid_creators = {c for c, count in creator_counts.items() if count >= min_connections}
+    valid_creators = {c for c, count in creator_counts.items() if count >= min_conn}
     
     G = nx.Graph()
     vtuber_nodes = set()
     creator_nodes = set()
 
-    for _, row in df.iterrows():
+    for _, row in _df.iterrows():
         v_name = row.get('name', 'Unknown')
         img = row.get('img', None)
         creators = [c for c in row['all_creators'] if c in valid_creators]
 
         if creators:
             # Add VTuber Node
-            if pd.notna(img) and str(img).startswith("http"):
+            if render_img and pd.notna(img) and str(img).startswith("http"):
                 G.add_node(v_name, shape='image', image=img, size=20, title=f"VTuber: {v_name}", label=v_name, group="VTuber")
             else:
                 G.add_node(v_name, color='#1DA1F2', size=15, title=f"VTuber: {v_name}", label=v_name, group="VTuber")
@@ -169,9 +153,38 @@ else:
                     G.add_node(c, color='#FF5733', size=25, shape='dot', title=f"Creator: {c}", label=c, group="Creator")
                     creator_nodes.add(c)
                 G.add_edge(v_name, c)
+                
+    return G, creator_counts
+
+
+# ==========================================
+# 4. SIDEBAR CONTROLS
+# ==========================================
+st.sidebar.header("📁 Graph Filtering")
+st.sidebar.markdown("Adjust the settings below to filter the network.")
+min_connections = st.sidebar.slider("Minimum VTubers per Creator", 1, 10, 2,
+                                    help="Hides creators who only have one 'child'.")
+
+render_images = st.sidebar.checkbox("Render VTuber Images", value=False, 
+                                    help="Toggle on to display images for VTubers. May impact performance slightly.")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown('Created by <a href="[https://x.com/TheDarkEnjoyer](https://x.com/TheDarkEnjoyer)" target="_blank">TheDarkEnjoyer</a>', unsafe_allow_html=True)
+
+# ==========================================
+# 5. MAIN APPLICATION LOGIC
+# ==========================================
+with st.spinner("Loading VTuber Database..."):
+    df = load_and_clean_data(DATA_FILE)
+
+if df is None:
+    st.error(f"❌ Could not find `{DATA_FILE}`. Please make sure the file is uploaded to your repository!")
+else:
+    # --- GRAPH BUILDING ---
+    G, creator_counts = build_network(df, min_connections, render_images)
 
     # ==========================================
-    # 5. TABS, SEARCH, AND RENDERING
+    # 6. TABS, SEARCH, AND RENDERING
     # ==========================================
     tab1, tab2 = st.tabs(["🕸️ Network Graph", "🏆 Creator Leaderboard"])
 
@@ -200,6 +213,7 @@ else:
             net = Network(height='800px', width='100%', bgcolor='#0E1117', font_color='white')
             net.from_nx(G_render)
             
+            # Optimized JSON (Added missing commas and streamlined stabilization)
             net.set_options("""
             {
               "configure": {
@@ -222,9 +236,10 @@ else:
                 "barnesHut": { 
                     "gravitationalConstant": -15000, 
                     "centralGravity": 0.3, 
-                    "springLength": 150, 
+                    "springLength": 150,
                     "springConstant": 0.05
                 },
+                "stabilization": { "enabled": true, "iterations": 600 },
                 "minVelocity": 0.75,
                 "solver": "barnesHut"
               }
